@@ -29,14 +29,56 @@ void Router::add_route(const uint32_t route_prefix,
     cerr << "DEBUG: adding route " << Address::from_ipv4_numeric(route_prefix).ip() << "/" << int(prefix_length)
          << " => " << (next_hop.has_value() ? next_hop->ip() : "(direct)") << " on interface " << interface_num << "\n";
 
-    DUMMY_CODE(route_prefix, prefix_length, next_hop, interface_num);
     // Your code here.
+        // 将路由条目添加到路由表
+    _routing_table.push_back({route_prefix, prefix_length, next_hop, interface_num});
 }
 
 //! \param[in] dgram The datagram to be routed
 void Router::route_one_datagram(InternetDatagram &dgram) {
-    DUMMY_CODE(dgram);
-    // Your code here.
+    // 1. 处理TTL：若TTL≤1，丢弃数据报
+    if (dgram.header().ttl <= 1) {
+        return;
+    }
+    // TTL减1，并重置校验和（因为TTL变化会导致校验和无效）
+    dgram.header().ttl -= 1;
+    dgram.header().cksum = 0;  // 后续序列化时会重新计算校验和
+
+    // 2. 提取目的IP地址（32位数值）
+    const uint32_t dst_ip = dgram.header().dst;
+    optional<RouteEntry> best_route;  // 用于存储最佳匹配路由
+
+    // 3. 最长前缀匹配：遍历路由表寻找最佳路由
+    for (const auto &entry : _routing_table) {
+        // 计算前缀掩码（如前缀长度24，掩码为0xFFFFFF00）
+        const uint32_t mask = (entry.prefix_length == 0) 
+            ? 0 
+            : 0xFFFFFFFF << (32 - entry.prefix_length);
+
+        // 提取路由前缀和目的IP的前缀（与掩码做与运算）
+        const uint32_t route_prefix_masked = entry.route_prefix & mask;
+        const uint32_t dst_prefix_masked = dst_ip & mask;
+
+        // 若前缀匹配，且当前路由前缀更长，则更新最佳路由
+        if (route_prefix_masked == dst_prefix_masked) {
+            if (!best_route.has_value() || entry.prefix_length > best_route->prefix_length) {
+                best_route = entry;
+            }
+        }
+    }
+
+    // 4. 若没有匹配的路由，丢弃数据报
+    if (!best_route.has_value()) {
+        return;
+    }
+
+    // 5. 确定下一跳地址：若路由有下一跳则使用，否则直接发送到目的IP
+    const Address next_hop = best_route->next_hop.has_value()
+        ? best_route->next_hop.value()
+        : Address::from_ipv4_numeric(dst_ip);
+
+    // 6. 通过指定接口发送数据报
+    _interfaces[best_route->interface_num].send_datagram(dgram, next_hop);
 }
 
 void Router::route() {

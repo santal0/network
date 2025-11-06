@@ -33,9 +33,22 @@ class NetworkInterface {
   private:
     //! Ethernet (known as hardware, network-access-layer, or link-layer) address of the interface
     EthernetAddress _ethernet_address;
-
     //! IP (known as internet-layer or network-layer) address of the interface
     Address _ip_address;
+    // ARP缓存条目：MAC地址和剩余生存时间(ms)
+    struct ARPEntry {
+        EthernetAddress eth_addr;
+        size_t ttl; // 剩余有效时间，毫秒
+    };
+
+    // IP地址(网络字节序)到ARP条目的映射
+    std::unordered_map<uint32_t, ARPEntry> _arp_cache;
+
+    // 等待发送的IP数据报：按目标IP分组
+    std::unordered_map<uint32_t, std::vector<InternetDatagram>> _pending_datagrams;
+
+    // ARP请求冷却时间：避免频繁发送同一IP的请求(ms)
+    std::unordered_map<uint32_t, size_t> _arp_request_cooldown;
 
     //! outbound queue of Ethernet frames that the NetworkInterface wants sent
     std::queue<EthernetFrame> _frames_out{};
